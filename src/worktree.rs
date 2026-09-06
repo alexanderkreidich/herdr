@@ -191,10 +191,15 @@ pub(crate) fn build_worktree_remove_command(
     }
 }
 
-pub(crate) fn is_dirty_worktree_remove_error(message: &str) -> bool {
+/// Git refusals that `git worktree remove --force` is allowed to override.
+///
+/// A checkout with an initialized submodule is rejected outright and the
+/// message carries no `--force` hint, so it needs its own clause.
+pub(crate) fn worktree_remove_requires_force(message: &str) -> bool {
     let lower = message.to_ascii_lowercase();
-    lower.contains("contains modified or untracked files")
-        && lower.contains("use --force to delete it")
+    (lower.contains("contains modified or untracked files")
+        && lower.contains("use --force to delete it"))
+        || lower.contains("containing submodules cannot be moved or removed")
 }
 
 pub(crate) fn is_not_working_tree_remove_error(message: &str) -> bool {
@@ -816,14 +821,23 @@ prunable stale
 
     #[test]
     fn dirty_remove_error_detection_matches_git_force_hint() {
-        assert!(is_dirty_worktree_remove_error(
+        assert!(worktree_remove_requires_force(
             "fatal: '/w/herdr' contains modified or untracked files, use --force to delete it"
         ));
-        assert!(!is_dirty_worktree_remove_error(
+        assert!(!worktree_remove_requires_force(
             "fatal: '/w/herdr' is a missing but already registered worktree"
         ));
-        assert!(!is_dirty_worktree_remove_error(
+        assert!(!worktree_remove_requires_force(
             "fatal: '/w/herdr' contains a locked worktree, use --force only if you know why"
+        ));
+    }
+
+    #[test]
+    fn submodule_remove_error_detection_requires_force() {
+        // git refuses to remove a checkout with an initialized submodule and
+        // gives no --force hint, but --force does remove it.
+        assert!(worktree_remove_requires_force(
+            "fatal: working trees containing submodules cannot be moved or removed"
         ));
     }
 

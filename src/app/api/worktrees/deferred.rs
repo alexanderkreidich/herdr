@@ -515,7 +515,7 @@ impl App {
                 &result.path,
             );
             let code =
-                if !result.forced && crate::worktree::is_dirty_worktree_remove_error(&message) {
+                if !result.forced && crate::worktree::worktree_remove_requires_force(&message) {
                     "dirty_worktree_requires_force"
                 } else {
                     "worktree_remove_failed"
