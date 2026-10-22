@@ -379,6 +379,13 @@ herdr terminal title clear
 ```
 
 Detach from direct attach with `ctrl+b q`. Send literal `ctrl+b` with `ctrl+b ctrl+b`.
+When Kitty graphics are enabled in configuration, `terminal attach` negotiates graphics delivery
+and displays the pane's current visible images on a Kitty-capable terminal. Images are sent as
+inline pixel data, including images originally printed with file-medium transfers; a receiving
+terminal does not need access to the source file. Joining and repainting reconcile the current
+scene rather than replaying historical image commands. Older clients that do not negotiate this
+capability retain the cell-only stream.
+
 `terminal session control` opens a writable live terminal stream for a pane,
 terminal, or agent target. It prints the same newline-delimited
 `terminal.frame` and `terminal.closed` records as observe mode. It reads

@@ -121,7 +121,8 @@ impl ClientRenderState {
                 seq,
                 repaint_pending,
             } => {
-                if !*repaint_pending && blit_encoder.is_current(&frame) {
+                if !*repaint_pending && frame.graphics.is_empty() && blit_encoder.is_current(&frame)
+                {
                     crate::render_prof::event("prepare_frame.ansi.skip_current");
                     return None;
                 }
@@ -324,11 +325,13 @@ impl ClientRenderState {
                     repaint_pending,
                 },
                 PreparedRender::TerminalAnsi {
-                    frame,
+                    mut frame,
                     encoded: Some(encoded),
                     ..
                 },
             ) => {
+                // APC bytes are delivery deltas, not part of the cell baseline.
+                frame.graphics = Vec::new();
                 blit_encoder.commit(frame, encoded);
                 *seq += 1;
                 *repaint_pending = false;
@@ -365,10 +368,15 @@ fn insert_graphics_before_sync_end(encoded: &mut Vec<u8>, graphics: &[u8]) {
         return;
     }
 
+    let output = b"\x1b7"
+        .iter()
+        .chain(graphics.iter())
+        .chain(b"\x1b8".iter())
+        .copied();
     if let Some(sync_end) = crate::protocol::render_ansi::final_sync_output_end(encoded) {
-        encoded.splice(sync_end..sync_end, graphics.iter().copied());
+        encoded.splice(sync_end..sync_end, output);
     } else {
-        encoded.extend_from_slice(graphics);
+        encoded.extend(output);
     }
 }
 

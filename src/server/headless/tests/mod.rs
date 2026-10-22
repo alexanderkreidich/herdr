@@ -12,6 +12,7 @@ mod surface_delta_tests;
 mod surface_interest_tests;
 #[path = "surface_scroll.rs"]
 mod surface_scroll_tests;
+mod terminal_graphics;
 
 fn client_shell_projection(
     receiver: &std::sync::mpsc::Receiver<Vec<u8>>,
@@ -109,6 +110,7 @@ fn test_headless_server_with_event_hub(event_hub: api::EventHub) -> HeadlessServ
         client_socket_identity,
         clients: HashMap::new(),
         native_graphics: Default::default(),
+        terminal_pixels: Default::default(),
         interactive_input_deadlines: HashMap::new(),
         interactive_render_budget: None,
         #[cfg(unix)]

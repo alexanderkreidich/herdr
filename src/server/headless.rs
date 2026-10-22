@@ -202,6 +202,7 @@ pub struct HeadlessServer {
     client_socket_identity: SocketFileIdentity,
     clients: HashMap<u64, ClientConnection>,
     native_graphics: native_graphics::NativeGraphics,
+    terminal_pixels: crate::kitty_graphics::terminal_pixels::TerminalPixels,
     interactive_input_deadlines: HashMap<crate::layout::PaneId, Instant>,
     interactive_render_budget: Option<(Instant, u8)>,
     #[cfg(unix)]
@@ -359,6 +360,7 @@ impl HeadlessServer {
             client_socket_identity,
             clients: HashMap::new(),
             native_graphics: Default::default(),
+            terminal_pixels: Default::default(),
             interactive_input_deadlines: HashMap::new(),
             interactive_render_budget: None,
             #[cfg(unix)]
@@ -1852,6 +1854,18 @@ impl HeadlessServer {
         }
 
         match ev {
+            ServerEvent::TerminalGraphicsReady => true,
+            ServerEvent::ClientTerminalGraphics { client_id, enabled } => {
+                let Some(client) = self.clients.get_mut(&client_id) else {
+                    return false;
+                };
+                if client.terminal_graphics_enabled == enabled {
+                    return false;
+                }
+                client.terminal_graphics_enabled = enabled;
+                client.render_state.request_repaint();
+                true
+            }
             ServerEvent::ClientConnected {
                 client_id,
                 cols,

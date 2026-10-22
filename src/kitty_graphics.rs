@@ -15,6 +15,8 @@ use crate::terminal::TerminalRuntimeRegistry;
 
 pub(crate) mod output;
 pub(crate) mod surface;
+pub(crate) mod terminal;
+pub(crate) mod terminal_pixels;
 
 pub(crate) use output::{GraphicsOperation, GraphicsOutput};
 use std::sync::Arc;
@@ -53,6 +55,10 @@ struct HostPlacement {
 enum HostSourceKey {
     Terminal {
         pane_id: PaneId,
+        image_id: u32,
+    },
+    AttachedTerminal {
+        terminal_id: String,
         image_id: u32,
     },
     ClientSurface {
@@ -412,6 +418,10 @@ fn host_placement_id(source_key: &HostSourceKey, placement: &KittyImagePlacement
     let mut hasher = DefaultHasher::new();
     match source_key {
         HostSourceKey::Terminal { pane_id, .. } => pane_id.raw().hash(&mut hasher),
+        HostSourceKey::AttachedTerminal { terminal_id, .. } => {
+            "terminal.attach".hash(&mut hasher);
+            terminal_id.hash(&mut hasher);
+        }
         HostSourceKey::ClientSurface { scope, source } => {
             "client.surface".hash(&mut hasher);
             scope.hash(&mut hasher);
@@ -641,12 +651,19 @@ fn scale_pixels(value: u32, source: u32, dest: u32) -> u32 {
 }
 
 fn image_signature(placement: &HostPlacement, format_code: u32) -> ImageSignature {
+    image_signature_from_placement(&placement.placement, format_code)
+}
+
+fn image_signature_from_placement(
+    placement: &KittyImagePlacement,
+    format_code: u32,
+) -> ImageSignature {
     ImageSignature {
-        image_width: placement.placement.image_width,
-        image_height: placement.placement.image_height,
+        image_width: placement.image_width,
+        image_height: placement.image_height,
         format_code,
-        data_len: placement.placement.data_len,
-        data_fingerprint: placement.placement.data_fingerprint,
+        data_len: placement.data_len,
+        data_fingerprint: placement.data_fingerprint,
     }
 }
 
