@@ -735,6 +735,7 @@ impl HeadlessServer {
                 }
             }
             let mut surface_parts = None;
+            let mut next_terminal_graphics = None;
             let frame = match mode {
                 ClientConnectionMode::ClientShell => {
                     let crate::server::client_shell::RenderedPaneSurface {
@@ -802,11 +803,38 @@ impl HeadlessServer {
                         continue;
                     }
                     let frame_started = crate::render_prof::timer();
-                    let frame = FrameData::from_ratatui_buffer_with_hyperlinks(
+                    let mut frame = FrameData::from_ratatui_buffer_with_hyperlinks(
                         &buffer,
                         cursor,
                         &hyperlinks,
                     );
+                    let mut graphics = self
+                        .clients
+                        .get(&client_id)
+                        .map(|client| client.terminal_graphics.clone())
+                        .unwrap_or_default();
+                    frame.graphics = if self.app.state.kitty_graphics_enabled
+                        && self
+                            .clients
+                            .get(&client_id)
+                            .is_some_and(|client| client.terminal_graphics_enabled)
+                    {
+                        let events = self.server_event_tx.clone();
+                        crate::kitty_graphics::terminal::output(
+                            runtime,
+                            &terminal_id,
+                            area,
+                            cell_size,
+                            &mut graphics,
+                            &self.terminal_pixels,
+                            move || {
+                                let _ = events.blocking_send(ServerEvent::TerminalGraphicsReady);
+                            },
+                        )
+                    } else {
+                        graphics.clear_bytes()
+                    };
+                    next_terminal_graphics = Some(graphics);
                     crate::render_prof::duration_since("full_render.frame_build", frame_started);
                     frame
                 }
@@ -833,13 +861,15 @@ impl HeadlessServer {
                 crate::render_prof::event("full_render.writer_missing");
                 continue;
             };
-            let has_graphics = surface_parts
-                .as_ref()
-                .is_some_and(|(_, _, _, graphics, _, _)| {
-                    !graphics.assets.is_empty()
-                        || !graphics.placements.is_empty()
-                        || !graphics.retained_assets.is_empty()
-                });
+            let terminal_has_graphics = !frame.graphics.is_empty();
+            let has_graphics = terminal_has_graphics
+                || surface_parts
+                    .as_ref()
+                    .is_some_and(|(_, _, _, graphics, _, _)| {
+                        !graphics.assets.is_empty()
+                            || !graphics.placements.is_empty()
+                            || !graphics.retained_assets.is_empty()
+                    });
             let mut next_shell_graphics_delivery = None;
             let prepared =
                 if let Some((panes, splits, popup, graphics, delivery, _)) = surface_parts {
@@ -976,6 +1006,9 @@ impl HeadlessServer {
                     }
                     if let Some(delivery) = next_shell_graphics_delivery {
                         client.shell_graphics_delivery = delivery;
+                    }
+                    if let Some(graphics) = next_terminal_graphics {
+                        client.terminal_graphics = graphics;
                     }
                     client.render_state.commit_sent_frame(prepared);
                     if shell_graphics_pending || shell_assets_deferred {

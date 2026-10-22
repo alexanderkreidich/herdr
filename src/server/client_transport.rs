@@ -394,6 +394,10 @@ impl ClientWriterQueue {
 /// Internal event sent from client transport threads to the main event loop.
 #[derive(Debug)]
 pub(crate) enum ServerEvent {
+    /// A bounded background read made an owned terminal image available (or failed).
+    TerminalGraphicsReady,
+    /// A terminal-attach client opted into or out of Kitty graphics delivery.
+    ClientTerminalGraphics { client_id: u64, enabled: bool },
     /// A new client completed the handshake.
     ClientConnected {
         client_id: u64,
@@ -1345,6 +1349,14 @@ fn client_read_loop_with_endpoint_controls(
                     client_id,
                     token: data,
                 }
+            }
+            ClientMessage::EndpointControl { kind, data }
+                if kind == crate::protocol::endpoint::TERMINAL_GRAPHICS_KIND =>
+            {
+                let Ok(enabled) = serde_json::from_str::<bool>(&data) else {
+                    continue;
+                };
+                ServerEvent::ClientTerminalGraphics { client_id, enabled }
             }
             ClientMessage::EndpointControl { kind, data } => {
                 let Some(response) = crate::server::client_endpoint_control::response(&kind, data)

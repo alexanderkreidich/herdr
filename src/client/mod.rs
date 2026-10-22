@@ -206,8 +206,8 @@ fn run_client_with_mode(
     let redraw_on_focus_gained = loaded_config.config.ui.redraw_on_focus_gained;
     let host_cursor = loaded_config.config.ui.host_cursor;
     let remote_image_paste_key = client_remote_image_paste_key(&loaded_config.config);
-    let kitty_graphics_enabled =
-        loaded_config.config.kitty_graphics_enabled() && client_rendered_shell;
+    let kitty_graphics_enabled = loaded_config.config.kitty_graphics_enabled()
+        && (client_rendered_shell || attach_escape.is_some());
     let pixel_geometry_enabled = kitty_graphics_enabled || attach_escape.is_some();
     let endpoint_keybindings = shell_config
         .as_ref()
@@ -312,6 +312,10 @@ fn run_client_with_mode(
                 ));
             }
             if let Some((terminal_id, takeover)) = attach_request {
+                write_to_server(&mut stream, &ClientMessage::EndpointControl {
+                    kind: crate::protocol::endpoint::TERMINAL_GRAPHICS_KIND.into(),
+                    data: loop_config.kitty_graphics_enabled.to_string(),
+                })?;
                 write_to_server(
                     &mut stream,
                     &ClientMessage::AttachTerminal {

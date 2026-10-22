@@ -699,7 +699,9 @@ pub(crate) fn collect_scene(
                 target,
                 image_id: *image_id,
             },
-            HostSourceKey::ClientSurface { .. } => continue,
+            HostSourceKey::ClientSurface { .. } | HostSourceKey::AttachedTerminal { .. } => {
+                continue
+            }
         };
         let Some((clipped, _)) = clipped_placement(&placement) else {
             continue;
