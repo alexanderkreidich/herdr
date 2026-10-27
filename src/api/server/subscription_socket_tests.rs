@@ -270,6 +270,34 @@ fn subscriptions_drain_retained_bursts_without_per_event_poll_delay() {
 }
 
 #[test]
+fn subscriptions_wake_for_published_events_without_sampling_pane_state_early() {
+    let mut test = SocketTest::new();
+    let mut client = test.connect();
+    client.subscribe(
+        "wake",
+        json!([{"type": "workspace.renamed"}, output_subscription()]),
+    );
+    reply_to_probe(test.app_request());
+    client.assert_started("wake");
+    let read = test.app_request();
+    assert_eq!(read.request.id, "wake:sub:1:read");
+    let sampled = Instant::now();
+    reply_to_probe(read);
+
+    // Publish while the stream waits for its next poll.
+    std::thread::sleep(Duration::from_millis(20));
+    let published = Instant::now();
+    test.hub.push(renamed_event(0));
+    client.assert_renames(0..1, published + CONNECTION_POLL_INTERVAL / 2);
+
+    // The event wakeup reads history only; pane state keeps its poll interval.
+    let next_read = test.app_request();
+    assert_eq!(next_read.request.id, "wake:sub:1:read");
+    assert!(sampled.elapsed() >= CONNECTION_POLL_INTERVAL);
+    reply_to_probe(next_read);
+}
+
+#[test]
 fn subscriptions_report_history_loss_before_sending_a_partial_stream() {
     assert_subscription_history_loss(false);
 }
