@@ -28,6 +28,7 @@ mod subscription_socket_tests;
 
 const SOCKET_PERMISSION_MODE: u32 = 0o600;
 pub(super) const CONNECTION_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const INITIAL_REQUEST_FIRST_POLL: Duration = Duration::from_millis(1);
 pub(super) const APP_RESPONSE_TIMEOUT: Duration = Duration::from_secs(5);
 const INITIAL_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 const STREAM_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -641,6 +642,8 @@ fn read_initial_request_line_with_limits(
     let deadline = Instant::now() + timeout;
     let mut bytes = Vec::new();
     let mut byte = [0u8; 1];
+    // Clients write right after connecting: look again soon, backing off for idle ones.
+    let mut poll_interval = INITIAL_REQUEST_FIRST_POLL;
 
     let result = loop {
         let read = match poll_local_stream_read(stream, &mut byte) {
@@ -650,6 +653,7 @@ fn read_initial_request_line_with_limits(
         match read {
             LocalStreamRead::Closed => break Ok(None),
             LocalStreamRead::Data => {
+                poll_interval = INITIAL_REQUEST_FIRST_POLL;
                 bytes.push(byte[0]);
                 if byte[0] == b'\n' {
                     break String::from_utf8(bytes)
@@ -670,7 +674,8 @@ fn read_initial_request_line_with_limits(
                         "timed out reading api request",
                     ));
                 }
-                std::thread::sleep(CONNECTION_POLL_INTERVAL);
+                std::thread::sleep(poll_interval);
+                poll_interval = (poll_interval * 2).min(CONNECTION_POLL_INTERVAL);
             }
         }
     };
@@ -855,13 +860,18 @@ fn stream_subscriptions(
         return Err(err);
     }
 
+    // Event history is read as soon as the hub publishes; pane state is sampled, and the
+    // connection checked, at least once per poll interval.
+    let mut next_sample = Instant::now();
     loop {
         if should_stop_connection(&mut stream, running)? {
             return Ok(());
         }
 
+        let seen_sequence = event_hub.current_sequence();
+        let sample_state = Instant::now() >= next_sample;
         for subscription in &mut subscriptions {
-            let events = match subscription.poll_batch(api_tx, event_hub) {
+            let events = match subscription.poll_batch(api_tx, event_hub, sample_state) {
                 Ok(events) => events,
                 Err(error) => {
                     write_json_line_allow_disconnect(
@@ -886,7 +896,13 @@ fn stream_subscriptions(
                 }
             }
         }
-        std::thread::sleep(CONNECTION_POLL_INTERVAL);
+        if sample_state {
+            next_sample = Instant::now() + CONNECTION_POLL_INTERVAL;
+        }
+        event_hub.wait_for_events_after(
+            seen_sequence,
+            next_sample.saturating_duration_since(Instant::now()),
+        );
     }
 }
 
@@ -1377,6 +1393,40 @@ mod tests {
         let response: serde_json::Value = serde_json::from_str(&response).unwrap();
         assert_eq!(response["id"], "ordinary");
         assert_eq!(response["result"]["type"], "pong");
+    }
+
+    #[test]
+    fn request_written_after_connect_is_read_without_waiting_a_poll_interval() {
+        let (mut client, server, path) = local_stream_pair("delayed-api-request");
+        let server_thread = std::thread::spawn(move || {
+            let (api_tx, _api_rx) = mpsc::unbounded_channel::<ApiRequestMessage>();
+            handle_connection(
+                server,
+                &api_tx,
+                &EventHub::default(),
+                &Arc::new(AtomicBool::new(true)),
+                None,
+            )
+        });
+        // Let the connection find the stream empty first, as it does in a burst of requests.
+        std::thread::sleep(Duration::from_millis(20));
+        let written = Instant::now();
+        client
+            .write_all(b"{\"id\":\"delayed\",\"method\":\"ping\",\"params\":{}}\n")
+            .unwrap();
+        client.flush().unwrap();
+
+        let response = read_line(&mut client);
+        let elapsed = written.elapsed();
+        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(response["id"], "delayed");
+        assert_eq!(response["result"]["type"], "pong");
+        assert!(
+            elapsed < CONNECTION_POLL_INTERVAL / 2,
+            "request answered {elapsed:?} after it was written"
+        );
+        server_thread.join().unwrap().unwrap();
+        fs::remove_file(path).unwrap();
     }
 
     #[test]

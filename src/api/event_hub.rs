@@ -1,6 +1,7 @@
 #[derive(Clone, Default)]
 pub struct EventHub {
     inner: std::sync::Arc<std::sync::Mutex<EventHubState>>,
+    published: std::sync::Arc<std::sync::Condvar>,
 }
 
 #[derive(Default)]
@@ -29,6 +30,19 @@ impl EventHub {
         if overflow > 0 {
             state.events.drain(0..overflow);
         }
+        drop(state);
+        self.published.notify_all();
+    }
+
+    /// Blocks until an event newer than `sequence` is published or `timeout` passes.
+    pub(super) fn wait_for_events_after(&self, sequence: u64, timeout: std::time::Duration) {
+        let Ok(state) = self.inner.lock() else {
+            std::thread::sleep(timeout);
+            return;
+        };
+        let _ = self
+            .published
+            .wait_timeout_while(state, timeout, |state| state.next_sequence <= sequence);
     }
 
     pub fn events_after(&self, sequence: u64) -> Vec<(u64, crate::api::schema::EventEnvelope)> {

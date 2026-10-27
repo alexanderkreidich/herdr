@@ -279,10 +279,13 @@ impl ActiveSubscription {
         }
     }
 
+    /// Reads retained event history; `sample_state` also samples current pane state,
+    /// which callers do at most once per poll interval rather than on every event.
     pub(super) fn poll_batch(
         &mut self,
         api_tx: &ApiRequestSender,
         event_hub: &EventHub,
+        sample_state: bool,
     ) -> Result<Vec<serde_json::Value>, ErrorBody> {
         match self {
             Self::Event(subscription) => {
@@ -305,7 +308,7 @@ impl ActiveSubscription {
                         matching.push(serde_json::to_value(event).map_err(event_encoding_error)?);
                     }
                 }
-                if matching.is_empty() {
+                if matching.is_empty() && sample_state {
                     if let Some(event) =
                         subscription.poll_snapshot(api_tx, event_hub).ok().flatten()
                     {
@@ -316,9 +319,10 @@ impl ActiveSubscription {
             }
             // These subscriptions sample current state, not retained event history.
             // Keep their existing cadence even when a lifecycle batch was nonempty.
-            Self::OutputMatched(_) | Self::ScrollChanged(_) => {
+            Self::OutputMatched(_) | Self::ScrollChanged(_) if sample_state => {
                 Ok(self.poll(api_tx, event_hub).into_iter().collect())
             }
+            Self::OutputMatched(_) | Self::ScrollChanged(_) => Ok(Vec::new()),
         }
     }
 }
@@ -787,12 +791,12 @@ mod tests {
         .unwrap();
         event_hub.push(presentation_event(None));
         event_hub.push(workspace_focused_event("live"));
-        let events = subscription.poll_batch(&api_tx, &event_hub).unwrap();
+        let events = subscription.poll_batch(&api_tx, &event_hub, true).unwrap();
         assert_eq!(events.len(), 2);
         assert_eq!(events[0]["data"]["workspace_id"], "setup");
         assert_eq!(events[1]["data"]["workspace_id"], "live");
         assert!(subscription
-            .poll_batch(&api_tx, &event_hub)
+            .poll_batch(&api_tx, &event_hub, true)
             .unwrap()
             .is_empty());
         let ActiveSubscription::Event(subscription) = subscription else {
@@ -838,7 +842,7 @@ mod tests {
                 event_hub.push(event);
             }
             let (api_tx, _api_rx) = tokio::sync::mpsc::unbounded_channel();
-            let events = subscription.poll_batch(&api_tx, &event_hub).unwrap();
+            let events = subscription.poll_batch(&api_tx, &event_hub, true).unwrap();
             let titles = events
                 .iter()
                 .map(|event| event["data"]["title"].as_str().unwrap())
